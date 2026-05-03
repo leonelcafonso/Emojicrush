@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <!-- Meta tags para o iPhone tratar como um App de verdade -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Emoji Crush">
@@ -36,7 +35,6 @@
             backdrop-filter: blur(5px);
         }
 
-        /* Tela de Loading Inicial */
         #loading-screen {
             position: absolute;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -91,11 +89,21 @@
         }
         button:active { transform: scale(0.95); }
         .hidden { display: none !important; }
+
+        /* Botão para apagar o Save (opcional para o jogador) */
+        #reset-save-btn {
+            background: none;
+            border: none;
+            color: #666;
+            font-size: 12px;
+            margin-top: 15px;
+            text-decoration: underline;
+            padding: 5px;
+        }
     </style>
 </head>
 <body>
 
-    <!-- TELA DE CARREGAMENTO (ASSET BUNDLE) -->
     <div id="loading-screen">
         <div class="spinner"></div>
         <h3 id="loading-text">Descompactando Fases...</h3>
@@ -114,6 +122,7 @@
         <h3 id="end-title"></h3>
         <p id="end-desc"></p>
         <button id="restartBtn">Próxima Fase</button>
+        <button id="reset-save-btn" class="hidden">Apagar Progresso e Recomeçar</button>
     </div>
 
     <script>
@@ -166,6 +175,7 @@
         const levelEl = document.getElementById('level');
         const messagePanel = document.getElementById('message-panel');
         const restartBtn = document.getElementById('restartBtn');
+        const resetSaveBtn = document.getElementById('reset-save-btn');
         const endTitle = document.getElementById('end-title');
         const endDesc = document.getElementById('end-desc');
         const loadingScreen = document.getElementById('loading-screen');
@@ -187,60 +197,77 @@
         let hiddenCount = ROWS * COLS;
         let isGameWon = false;
 
-        // Controle de Fases e Assets
         const XOR_KEY = 42;
-        let levelImages = []; // Array que guardará as imagens coloridas na memória RAM
+        let levelImages = []; 
         let currentLevel = 0;
 
         // ==========================================
-        // O DESCOMPACTADOR DO ASSET BUNDLE (sys_config.bin)
+        // O DESCOMPACTADOR DO ASSET BUNDLE
         // ==========================================
         async function loadAssetBundle() {
             try {
-                // Tenta baixar o pacote protegido da pasta assets
                 const response = await fetch('./assets/sys_config.bin');
-                if (!response.ok) throw new Error("Pacote de assets não encontrado.");
+                if (!response.ok) throw new Error("Servidor web não encontrado.");
                 
                 const buffer = await response.arrayBuffer();
+                await processBuffer(buffer);
+            } catch (err) {
+                console.warn("Modo Local detectado. Ativando botão manual.", err);
+                loadingScreen.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <h3 style="color: #ff9966; margin-bottom: 10px;">Modo Offline Detectado</h3>
+                        <p style="color: #ccc; margin-bottom: 25px; font-size: 14px;">Para jogar sem internet, selecione o arquivo <b>sys_config.bin</b></p>
+                        <input type="file" id="offlineFileInput" accept=".bin" style="display: none;">
+                        <label for="offlineFileInput" style="padding: 12px 24px; background: #444466; color: white; border-radius: 8px; font-weight: bold; cursor: pointer; border: 2px solid #00d2ff;">
+                            Selecionar sys_config.bin
+                        </label>
+                    </div>
+                `;
+
+                document.getElementById('offlineFileInput').addEventListener('change', function(e) {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    
+                    loadingScreen.innerHTML = '<div class="spinner"></div><h3 id="loading-text" style="color: white; margin-top: 15px;">Descriptografando...</h3>';
+                    
+                    const reader = new FileReader();
+                    reader.onload = async function(event) {
+                        await processBuffer(event.target.result);
+                    };
+                    reader.readAsArrayBuffer(file);
+                });
+            }
+        }
+
+        async function processBuffer(buffer) {
+            try {
                 const data = new Uint8Array(buffer);
+                const loadingTextEl = document.getElementById('loading-text');
+                if (loadingTextEl) loadingTextEl.textContent = "Descriptografando...";
 
-                loadingText.textContent = "Descriptografando...";
+                for (let i = 0; i < data.length; i++) data[i] = data[i] ^ XOR_KEY;
 
-                // 1. Remove a máscara XOR de todo o arquivo
-                for (let i = 0; i < data.length; i++) {
-                    data[i] = data[i] ^ XOR_KEY;
-                }
-
-                // 2. Encontra o fim do cabeçalho (O caractere '|')
                 let headerEndIndex = -1;
                 for (let i = 0; i < data.length; i++) {
-                    if (data[i] === 124) { // 124 é '|' na tabela ASCII
-                        headerEndIndex = i;
-                        break;
-                    }
+                    if (data[i] === 124) { headerEndIndex = i; break; }
                 }
 
-                if(headerEndIndex === -1) throw new Error("Arquivo corrompido.");
+                if (headerEndIndex === -1) throw new Error("Arquivo corrompido.");
 
-                // 3. Lê os tamanhos das imagens no cabeçalho
                 const headerBytes = data.slice(0, headerEndIndex);
                 const headerStr = new TextDecoder().decode(headerBytes);
                 const imageSizes = headerStr.split(',').map(Number);
 
-                // 4. Corta o arquivo em pedaços e gera os Links Virtuais das fotos
                 let offset = headerEndIndex + 1;
-                for(let i = 0; i < imageSizes.length; i++) {
+                for (let i = 0; i < imageSizes.length; i++) {
                     const size = imageSizes[i];
                     if (size > 0) {
                         const imgData = data.slice(offset, offset + size);
                         const blob = new Blob([imgData], { type: 'image/jpeg' });
                         const url = URL.createObjectURL(blob);
                         
-                        // Cria um elemento Image() real na RAM
                         const img = new Image();
                         img.src = url;
-                        
-                        // Espera a imagem carregar na memória
                         await new Promise(resolve => { img.onload = resolve; });
                         
                         levelImages.push(img);
@@ -248,14 +275,31 @@
                     }
                 }
 
-                console.log(`Carregadas ${levelImages.length} fases com sucesso!`);
+                console.log(`Carregadas ${levelImages.length} fases!`);
                 loadingScreen.classList.add('hidden');
-                initLevel(0); // Inicia a primeira fase
+
+                // --- LÓGICA DE CARREGAMENTO DO SAVE ---
+                let savedLevel = localStorage.getItem('emojiCrushSave');
+                let startingLevel = 0;
+                
+                if (savedLevel !== null) {
+                    startingLevel = parseInt(savedLevel);
+                    // Prevenção de erro: Se o usuário trocou o arquivo .bin por um com menos fases
+                    if (startingLevel >= levelImages.length) {
+                        startingLevel = 0;
+                        localStorage.setItem('emojiCrushSave', 0);
+                    }
+                }
+                
+                initLevel(startingLevel);
 
             } catch (err) {
                 console.error(err);
-                loadingText.textContent = "Erro ao carregar fases!";
-                loadingText.style.color = "red";
+                const loadingTextEl = document.getElementById('loading-text');
+                if (loadingTextEl) {
+                    loadingTextEl.textContent = "Erro ao carregar arquivo!";
+                    loadingTextEl.style.color = "red";
+                }
             }
         }
 
@@ -276,6 +320,7 @@
             isGameWon = false;
             remainingEl.textContent = hiddenCount;
             messagePanel.classList.add('hidden');
+            resetSaveBtn.classList.add('hidden');
             
             revealedGrid = [];
             for (let r = 0; r < ROWS; r++) {
@@ -284,9 +329,7 @@
                 revealedGrid.push(row);
             }
 
-            do {
-                generateCleanBoard();
-            } while (!hasPossibleMoves());
+            do { generateCleanBoard(); } while (!hasPossibleMoves());
 
             isProcessing = false;
             drawBoard();
@@ -311,12 +354,11 @@
         }
 
         // ==========================================
-        // RENDERIZAÇÃO
+        // RENDERIZAÇÃO E LÓGICA
         // ==========================================
         function drawBoard() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // Desenha a imagem da FASE ATUAL
             if (levelImages[currentLevel]) {
                 ctx.drawImage(levelImages[currentLevel], 0, 0, canvas.width, canvas.height);
             } else {
@@ -360,9 +402,6 @@
             }
         }
 
-        // ==========================================
-        // LÓGICA DE JOGO
-        // ==========================================
         function findMatches() {
             let matchedSet = new Set();
             for (let r = 0; r < ROWS; r++) {
@@ -429,6 +468,10 @@
                     endDesc.textContent = "O tabuleiro travou.";
                     endDesc.classList.remove('hidden');
                     restartBtn.textContent = "Tentar Fase Novamente";
+                    
+                    // Exibe o botão de apagar save se ele já tiver progresso
+                    if (currentLevel > 0) resetSaveBtn.classList.remove('hidden');
+
                     sfxGameOver();
                     messagePanel.classList.remove('hidden');
                 }
@@ -572,24 +615,31 @@
             }
         });
 
+        // --- LÓGICA DE SALVAR O SAVE ---
         restartBtn.addEventListener('click', () => {
             sfxSelect();
             if (hiddenCount === 0) {
-                // Venceu a fase
                 if (currentLevel < levelImages.length - 1) {
-                    initLevel(currentLevel + 1); // Vai para a próxima
+                    let nextLevel = currentLevel + 1;
+                    localStorage.setItem('emojiCrushSave', nextLevel); // Salva o progresso
+                    initLevel(nextLevel);
                 } else {
-                    initLevel(0); // Zerou o jogo, recomeça da primeira
+                    localStorage.setItem('emojiCrushSave', 0); // Zera o progresso se finalizou o jogo
+                    initLevel(0);
                 }
             } else {
-                // Perdeu, recomeça a mesma fase
                 startBoard();
             }
         });
 
-        // ==========================================
-        // BOOT DO JOGO (Download dos Assets)
-        // ==========================================
+        // --- BOTÃO DE DELETAR O SAVE MANUAMENTE ---
+        resetSaveBtn.addEventListener('click', () => {
+            if(confirm("Tem certeza que deseja apagar seu progresso e voltar para a Fase 1?")) {
+                localStorage.setItem('emojiCrushSave', 0);
+                initLevel(0);
+            }
+        });
+
         loadAssetBundle();
 
     </script>
