@@ -21,7 +21,15 @@
             touch-action: manipulation;
         }
 
-        .header { text-align: center; margin-bottom: 15px; }
+        /* Correção do UI Bug: Altura fixa para não empurrar o Canvas */
+        .header { 
+            text-align: center; 
+            margin-bottom: 15px; 
+            height: 80px; 
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
         h2 { margin: 0 0 5px 0; color: #00d2ff; font-size: 28px; }
         
         #score-board {
@@ -33,6 +41,14 @@
             border: 2px solid #00d2ff;
             display: inline-block;
             backdrop-filter: blur(5px);
+            white-space: nowrap; /* Impede a quebra de linha no celular */
+        }
+
+        /* "Caixas" fixas para os números não balançarem a tela */
+        .fixed-num {
+            display: inline-block;
+            min-width: 35px; 
+            text-align: center;
         }
 
         #loading-screen {
@@ -90,7 +106,6 @@
         button:active { transform: scale(0.95); }
         .hidden { display: none !important; }
 
-        /* Botão para apagar o Save (opcional para o jogador) */
         #reset-save-btn {
             background: none;
             border: none;
@@ -112,7 +127,7 @@
     <div class="header">
         <h2>Emoji Crush</h2>
         <div id="score-board">
-            Fase: <span id="level">1</span> | Pontos: <span id="score">0</span> | Faltam: <span id="remaining">64</span>
+            Fase: <span id="level" class="fixed-num">1</span> | Pts: <span id="score" class="fixed-num">0</span> | Faltam: <span id="remaining" class="fixed-num">64</span>
         </div>
     </div>
 
@@ -153,6 +168,11 @@
             playTone(554, 'square', 0.1, 0.08);   
             playTone(659, 'square', 0.2, 0.16);   
         }
+        function sfxReveal() { // Som brilhante para quando a foto aparece
+            playTone(880, 'sine', 0.1, 0);
+            playTone(1318, 'sine', 0.15, 0.1);
+            playTone(1760, 'sine', 0.2, 0.25);
+        }
         function sfxGameOver() {
             playTone(300, 'sawtooth', 0.3, 0);
             playTone(250, 'sawtooth', 0.3, 0.3);
@@ -176,10 +196,7 @@
         const messagePanel = document.getElementById('message-panel');
         const restartBtn = document.getElementById('restartBtn');
         const resetSaveBtn = document.getElementById('reset-save-btn');
-        const endTitle = document.getElementById('end-title');
-        const endDesc = document.getElementById('end-desc');
         const loadingScreen = document.getElementById('loading-screen');
-        const loadingText = document.getElementById('loading-text');
 
         const ROWS = 8;
         const COLS = 8;
@@ -188,6 +205,8 @@
         canvas.height = ROWS * CELL_SIZE; 
 
         const CANDIES = ['🍎', '🍇', '🍊', '🫐', '🍋', '🍉'];
+        const CANDY_COLORS = { '🍎':'#ff3b30', '🍇':'#af52de', '🍊':'#ff9500', '🫐':'#007aff', '🍋':'#ffcc00', '🍉':'#ff2d55' };
+        
         let grid = [];
         let score = 0;
         let selected = null; 
@@ -201,6 +220,58 @@
         let levelImages = []; 
         let currentLevel = 0;
 
+        // Variaveis de Animação
+        let particles = [];
+        let glows = [];
+
+        // ==========================================
+        // MOTOR GRÁFICO (GAME LOOP)
+        // ==========================================
+        function gameLoop() {
+            requestAnimationFrame(gameLoop); // O Jogo agora roda a 60 FPS
+            updateAnimations();
+            drawBoard();
+        }
+
+        function updateAnimations() {
+            // Atualiza Explosões
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.05; // Vai sumindo
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+            // Atualiza Brilho do Reveal
+            for (let i = glows.length - 1; i >= 0; i--) {
+                let g = glows[i];
+                g.life -= 0.03;
+                if (g.life <= 0) glows.splice(i, 1);
+            }
+        }
+
+        function spawnExplosion(r, c, candy) {
+            let color = CANDY_COLORS[candy] || '#ffffff';
+            let centerX = c * CELL_SIZE + CELL_SIZE / 2;
+            let centerY = r * CELL_SIZE + CELL_SIZE / 2;
+            
+            // Cria 8 pedacinhos explodindo para os lados
+            for (let i = 0; i < 8; i++) {
+                particles.push({
+                    x: centerX,
+                    y: centerY,
+                    vx: (Math.random() - 0.5) * 12,
+                    vy: (Math.random() - 0.5) * 12,
+                    life: 1,
+                    color: color
+                });
+            }
+        }
+
+        function spawnGlow(r, c) {
+            glows.push({ r: r, c: c, life: 1 });
+        }
+
         // ==========================================
         // O DESCOMPACTADOR DO ASSET BUNDLE
         // ==========================================
@@ -208,32 +279,25 @@
             try {
                 const response = await fetch('./assets/sys_config.bin');
                 if (!response.ok) throw new Error("Servidor web não encontrado.");
-                
                 const buffer = await response.arrayBuffer();
                 await processBuffer(buffer);
             } catch (err) {
-                console.warn("Modo Local detectado. Ativando botão manual.", err);
                 loadingScreen.innerHTML = `
                     <div style="text-align: center; padding: 20px;">
                         <h3 style="color: #ff9966; margin-bottom: 10px;">Modo Offline Detectado</h3>
-                        <p style="color: #ccc; margin-bottom: 25px; font-size: 14px;">Para jogar sem internet, selecione o arquivo <b>sys_config.bin</b></p>
+                        <p style="color: #ccc; margin-bottom: 25px; font-size: 14px;">Selecione o arquivo <b>sys_config.bin</b></p>
                         <input type="file" id="offlineFileInput" accept=".bin" style="display: none;">
                         <label for="offlineFileInput" style="padding: 12px 24px; background: #444466; color: white; border-radius: 8px; font-weight: bold; cursor: pointer; border: 2px solid #00d2ff;">
                             Selecionar sys_config.bin
                         </label>
                     </div>
                 `;
-
                 document.getElementById('offlineFileInput').addEventListener('change', function(e) {
                     const file = e.target.files[0];
                     if (!file) return;
-                    
                     loadingScreen.innerHTML = '<div class="spinner"></div><h3 id="loading-text" style="color: white; margin-top: 15px;">Descriptografando...</h3>';
-                    
                     const reader = new FileReader();
-                    reader.onload = async function(event) {
-                        await processBuffer(event.target.result);
-                    };
+                    reader.onload = async function(event) { await processBuffer(event.target.result); };
                     reader.readAsArrayBuffer(file);
                 });
             }
@@ -242,76 +306,48 @@
         async function processBuffer(buffer) {
             try {
                 const data = new Uint8Array(buffer);
-                const loadingTextEl = document.getElementById('loading-text');
-                if (loadingTextEl) loadingTextEl.textContent = "Descriptografando...";
-
                 for (let i = 0; i < data.length; i++) data[i] = data[i] ^ XOR_KEY;
 
                 let headerEndIndex = -1;
-                for (let i = 0; i < data.length; i++) {
-                    if (data[i] === 124) { headerEndIndex = i; break; }
-                }
-
+                for (let i = 0; i < data.length; i++) { if (data[i] === 124) { headerEndIndex = i; break; } }
                 if (headerEndIndex === -1) throw new Error("Arquivo corrompido.");
 
-                const headerBytes = data.slice(0, headerEndIndex);
-                const headerStr = new TextDecoder().decode(headerBytes);
+                const headerStr = new TextDecoder().decode(data.slice(0, headerEndIndex));
                 const imageSizes = headerStr.split(',').map(Number);
 
                 let offset = headerEndIndex + 1;
                 for (let i = 0; i < imageSizes.length; i++) {
-                    const size = imageSizes[i];
-                    if (size > 0) {
-                        const imgData = data.slice(offset, offset + size);
-                        const blob = new Blob([imgData], { type: 'image/jpeg' });
-                        const url = URL.createObjectURL(blob);
-                        
+                    if (imageSizes[i] > 0) {
+                        const imgData = data.slice(offset, offset + imageSizes[i]);
+                        const url = URL.createObjectURL(new Blob([imgData], { type: 'image/jpeg' }));
                         const img = new Image();
                         img.src = url;
                         await new Promise(resolve => { img.onload = resolve; });
-                        
                         levelImages.push(img);
-                        offset += size;
+                        offset += imageSizes[i];
                     }
                 }
-
-                console.log(`Carregadas ${levelImages.length} fases!`);
                 loadingScreen.classList.add('hidden');
-
-                // --- LÓGICA DE CARREGAMENTO DO SAVE ---
-                let savedLevel = localStorage.getItem('emojiCrushSave');
-                let startingLevel = 0;
                 
-                if (savedLevel !== null) {
-                    startingLevel = parseInt(savedLevel);
-                    // Prevenção de erro: Se o usuário trocou o arquivo .bin por um com menos fases
-                    if (startingLevel >= levelImages.length) {
-                        startingLevel = 0;
-                        localStorage.setItem('emojiCrushSave', 0);
-                    }
-                }
+                let savedLevel = localStorage.getItem('emojiCrushSave');
+                let startingLevel = savedLevel !== null ? parseInt(savedLevel) : 0;
+                if (startingLevel >= levelImages.length) { startingLevel = 0; localStorage.setItem('emojiCrushSave', 0); }
                 
                 initLevel(startingLevel);
-
             } catch (err) {
-                console.error(err);
-                const loadingTextEl = document.getElementById('loading-text');
-                if (loadingTextEl) {
-                    loadingTextEl.textContent = "Erro ao carregar arquivo!";
-                    loadingTextEl.style.color = "red";
-                }
+                document.getElementById('loading-text').textContent = "Erro ao carregar arquivo!";
+                document.getElementById('loading-text').style.color = "red";
             }
         }
 
         // ==========================================
-        // INICIALIZAÇÃO DE FASE
+        // LÓGICA DO JOGO
         // ==========================================
         function initLevel(levelIndex) {
             currentLevel = levelIndex;
             levelEl.textContent = currentLevel + 1;
             score = 0;
             scoreEl.textContent = score;
-            
             startBoard();
         }
 
@@ -321,6 +357,7 @@
             remainingEl.textContent = hiddenCount;
             messagePanel.classList.add('hidden');
             resetSaveBtn.classList.add('hidden');
+            particles = []; glows = []; // Limpa animações ao reiniciar
             
             revealedGrid = [];
             for (let r = 0; r < ROWS; r++) {
@@ -330,9 +367,7 @@
             }
 
             do { generateCleanBoard(); } while (!hasPossibleMoves());
-
             isProcessing = false;
-            drawBoard();
         }
 
         function generateCleanBoard() {
@@ -341,65 +376,66 @@
                 let row = [];
                 for (let c = 0; c < COLS; c++) {
                     let randomCandy;
-                    do {
-                        randomCandy = CANDIES[Math.floor(Math.random() * CANDIES.length)];
-                    } while (
-                        (c >= 2 && row[c-1] === randomCandy && row[c-2] === randomCandy) ||
-                        (r >= 2 && grid[r-1][c] === randomCandy && grid[r-2][c] === randomCandy)
-                    );
+                    do { randomCandy = CANDIES[Math.floor(Math.random() * CANDIES.length)]; } 
+                    while ((c >= 2 && row[c-1] === randomCandy && row[c-2] === randomCandy) ||
+                           (r >= 2 && grid[r-1][c] === randomCandy && grid[r-2][c] === randomCandy));
                     row.push(randomCandy);
                 }
                 grid.push(row);
             }
         }
 
-        // ==========================================
-        // RENDERIZAÇÃO E LÓGICA
-        // ==========================================
         function drawBoard() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+            // 1. Fundo da Fase
             if (levelImages[currentLevel]) {
                 ctx.drawImage(levelImages[currentLevel], 0, 0, canvas.width, canvas.height);
             } else {
-                ctx.fillStyle = '#222';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#222'; ctx.fillRect(0, 0, canvas.width, canvas.height);
             }
+
+            // 2. Animação de Brilho (Por baixo dos blocos escuros)
+            glows.forEach(g => {
+                ctx.fillStyle = `rgba(255, 255, 200, ${g.life})`;
+                ctx.fillRect(g.c * CELL_SIZE, g.r * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            });
 
             if (isGameWon) return; 
 
+            // 3. Blocos e Emojis
             for (let r = 0; r < ROWS; r++) {
                 for (let c = 0; c < COLS; c++) {
-                    const x = c * CELL_SIZE;
-                    const y = r * CELL_SIZE;
+                    const x = c * CELL_SIZE; const y = r * CELL_SIZE;
 
-                    if (revealedGrid[r][c] === true) {
-                        ctx.fillStyle = 'rgba(0, 0, 0, 0.65)'; 
-                    } else {
-                        ctx.fillStyle = '#000000'; 
-                    }
+                    if (revealedGrid[r][c] === true) ctx.fillStyle = 'rgba(0, 0, 0, 0.65)'; 
+                    else ctx.fillStyle = '#000000'; 
+                    
                     ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
-
                     ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-                    ctx.lineWidth = 1;
                     ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
 
                     if (selected && selected.r === r && selected.c === c) {
                         ctx.fillStyle = 'rgba(0, 210, 255, 0.3)';
                         ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
-                        ctx.strokeStyle = '#00d2ff';
-                        ctx.lineWidth = 3;
+                        ctx.strokeStyle = '#00d2ff'; ctx.lineWidth = 3;
                         ctx.strokeRect(x+2, y+2, CELL_SIZE-4, CELL_SIZE-4);
                     }
 
                     if (grid[r][c]) {
-                        ctx.font = '28px Arial';
-                        ctx.textAlign = 'center';
-                        ctx.textBaseline = 'middle';
+                        ctx.font = '28px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                         ctx.fillText(grid[r][c], x + CELL_SIZE/2, y + CELL_SIZE/2 + 2);
                     }
                 }
             }
+
+            // 4. Animação de Explosão de Partículas (Por cima de tudo)
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life;
+                ctx.fillRect(p.x - 3, p.y - 3, 6, 6); // Partículas quadradas de 6px
+                ctx.globalAlpha = 1.0;
+            });
         }
 
         function findMatches() {
@@ -410,9 +446,7 @@
                     if (!candy) continue;
                     let matchLen = 1;
                     while (c + matchLen < COLS && grid[r][c + matchLen] === candy) matchLen++;
-                    if (matchLen >= 3) {
-                        for (let i = 0; i < matchLen; i++) matchedSet.add(`${r},${c + i}`);
-                    }
+                    if (matchLen >= 3) { for (let i = 0; i < matchLen; i++) matchedSet.add(`${r},${c + i}`); }
                 }
             }
             for (let c = 0; c < COLS; c++) {
@@ -421,14 +455,11 @@
                     if (!candy) continue;
                     let matchLen = 1;
                     while (r + matchLen < ROWS && grid[r + matchLen][c] === candy) matchLen++;
-                    if (matchLen >= 3) {
-                        for (let i = 0; i < matchLen; i++) matchedSet.add(`${r + i},${c}`);
-                    }
+                    if (matchLen >= 3) { for (let i = 0; i < matchLen; i++) matchedSet.add(`${r + i},${c}`); }
                 }
             }
             return Array.from(matchedSet).map(str => {
-                const parts = str.split(',');
-                return { r: parseInt(parts[0]), c: parseInt(parts[1]) };
+                const parts = str.split(','); return { r: parseInt(parts[0]), c: parseInt(parts[1]) };
             });
         }
 
@@ -453,9 +484,7 @@
         }
 
         function swapInGrid(r1, c1, r2, c2) {
-            let temp = grid[r1][c1];
-            grid[r1][c1] = grid[r2][c2];
-            grid[r2][c2] = temp;
+            let temp = grid[r1][c1]; grid[r1][c1] = grid[r2][c2]; grid[r2][c2] = temp;
         }
 
         function processMatches() {
@@ -463,15 +492,12 @@
             
             if (matches.length === 0) {
                 if (!isGameWon && !hasPossibleMoves()) {
-                    endTitle.textContent = "Sem Movimentos";
-                    endTitle.style.color = "#ff3333";
-                    endDesc.textContent = "O tabuleiro travou.";
-                    endDesc.classList.remove('hidden');
+                    document.getElementById('end-title').textContent = "Sem Movimentos";
+                    document.getElementById('end-title').style.color = "#ff3333";
+                    document.getElementById('end-desc').textContent = "O tabuleiro travou.";
+                    document.getElementById('end-desc').classList.remove('hidden');
                     restartBtn.textContent = "Tentar Fase Novamente";
-                    
-                    // Exibe o botão de apagar save se ele já tiver progresso
                     if (currentLevel > 0) resetSaveBtn.classList.remove('hidden');
-
                     sfxGameOver();
                     messagePanel.classList.remove('hidden');
                 }
@@ -488,15 +514,16 @@
                 revealRandomCells(bottomRowExplosions);
             }
 
-            matches.forEach(m => { grid[m.r][m.c] = null; });
-            drawBoard();
+            // Ativa o gatilho das partículas antes de remover as frutas!
+            matches.forEach(m => { 
+                spawnExplosion(m.r, m.c, grid[m.r][m.c]);
+                grid[m.r][m.c] = null; 
+            });
 
             setTimeout(() => {
                 applyGravity();
-                drawBoard();
                 setTimeout(() => {
                     refillBoard();
-                    drawBoard();
                     setTimeout(processMatches, 300);
                 }, 200);
             }, 300);
@@ -507,18 +534,21 @@
             let unrevealedCells = [];
             for (let r = 0; r < ROWS; r++) {
                 for (let c = 0; c < COLS; c++) {
-                    if (revealedGrid[r][c] === false) {
-                        unrevealedCells.push({r: r, c: c});
-                    }
+                    if (revealedGrid[r][c] === false) unrevealedCells.push({r: r, c: c});
                 }
             }
 
             let cellsToReveal = Math.min(quantity, unrevealedCells.length);
+            
+            // Se ele conseguiu revelar pelo menos um bloco, toca o som especial
+            if (cellsToReveal > 0) sfxReveal(); 
 
             for (let i = 0; i < cellsToReveal; i++) {
                 let randomIndex = Math.floor(Math.random() * unrevealedCells.length);
                 let selectedCell = unrevealedCells.splice(randomIndex, 1)[0];
                 revealedGrid[selectedCell.r][selectedCell.c] = true;
+                
+                spawnGlow(selectedCell.r, selectedCell.c); // Cria o brilho na coordenada!
                 hiddenCount--;
             }
 
@@ -527,19 +557,17 @@
             if (hiddenCount === 0 && !isGameWon) {
                 isGameWon = true;
                 setTimeout(() => {
-                    drawBoard(); 
                     sfxWin();
-                    
                     if (currentLevel < levelImages.length - 1) {
-                        endTitle.textContent = "Fase Concluída!";
-                        endTitle.style.color = "#00ff00";
-                        endDesc.classList.add('hidden');
+                        document.getElementById('end-title').textContent = "Fase Concluída!";
+                        document.getElementById('end-title').style.color = "#00ff00";
+                        document.getElementById('end-desc').classList.add('hidden');
                         restartBtn.textContent = "Próxima Fase";
                     } else {
-                        endTitle.textContent = "Parabéns!";
-                        endTitle.style.color = "#ffdd00";
-                        endDesc.textContent = "Você terminou todas as imagens!";
-                        endDesc.classList.remove('hidden');
+                        document.getElementById('end-title').textContent = "Zeradou!";
+                        document.getElementById('end-title').style.color = "#ffdd00";
+                        document.getElementById('end-desc').textContent = "Você terminou todas as imagens!";
+                        document.getElementById('end-desc').classList.remove('hidden');
                         restartBtn.textContent = "Jogar Tudo de Novo";
                     }
                     messagePanel.classList.remove('hidden');
@@ -551,9 +579,8 @@
             for (let c = 0; c < COLS; c++) {
                 let emptySpaces = 0;
                 for (let r = ROWS - 1; r >= 0; r--) {
-                    if (grid[r][c] === null) {
-                        emptySpaces++;
-                    } else if (emptySpaces > 0) {
+                    if (grid[r][c] === null) { emptySpaces++; } 
+                    else if (emptySpaces > 0) {
                         grid[r + emptySpaces][c] = grid[r][c];
                         grid[r][c] = null;
                     }
@@ -564,9 +591,7 @@
         function refillBoard() {
             for (let c = 0; c < COLS; c++) {
                 for (let r = 0; r < ROWS; r++) {
-                    if (grid[r][c] === null) {
-                        grid[r][c] = CANDIES[Math.floor(Math.random() * CANDIES.length)];
-                    }
+                    if (grid[r][c] === null) grid[r][c] = CANDIES[Math.floor(Math.random() * CANDIES.length)];
                 }
             }
         }
@@ -579,22 +604,17 @@
             const x = (e.clientX - rect.left) * (canvas.width / rect.width);
             const y = (e.clientY - rect.top) * (canvas.height / rect.height);
             
-            const c = Math.floor(x / CELL_SIZE);
-            const r = Math.floor(y / CELL_SIZE);
+            const c = Math.floor(x / CELL_SIZE); const r = Math.floor(y / CELL_SIZE);
 
             if (!selected) {
-                sfxSelect();
-                selected = {r, c};
-                drawBoard();
+                sfxSelect(); selected = {r, c};
             } else {
                 let isAdjacent = Math.abs(selected.r - r) + Math.abs(selected.c - c) === 1;
-
                 if (isAdjacent) {
                     isProcessing = true;
                     let prevR = selected.r; let prevC = selected.c;
                     swapInGrid(prevR, prevC, r, c);
                     selected = null;
-                    drawBoard();
 
                     setTimeout(() => {
                         let matches = findMatches();
@@ -604,42 +624,37 @@
                             sfxError();
                             swapInGrid(r, c, prevR, prevC);
                             isProcessing = false;
-                            drawBoard();
                         }
                     }, 250);
                 } else {
-                    sfxSelect();
-                    selected = {r, c};
-                    drawBoard();
+                    sfxSelect(); selected = {r, c};
                 }
             }
         });
 
-        // --- LÓGICA DE SALVAR O SAVE ---
         restartBtn.addEventListener('click', () => {
             sfxSelect();
             if (hiddenCount === 0) {
                 if (currentLevel < levelImages.length - 1) {
                     let nextLevel = currentLevel + 1;
-                    localStorage.setItem('emojiCrushSave', nextLevel); // Salva o progresso
+                    localStorage.setItem('emojiCrushSave', nextLevel);
                     initLevel(nextLevel);
                 } else {
-                    localStorage.setItem('emojiCrushSave', 0); // Zera o progresso se finalizou o jogo
+                    localStorage.setItem('emojiCrushSave', 0);
                     initLevel(0);
                 }
-            } else {
-                startBoard();
-            }
+            } else { startBoard(); }
         });
 
-        // --- BOTÃO DE DELETAR O SAVE MANUAMENTE ---
         resetSaveBtn.addEventListener('click', () => {
             if(confirm("Tem certeza que deseja apagar seu progresso e voltar para a Fase 1?")) {
-                localStorage.setItem('emojiCrushSave', 0);
-                initLevel(0);
+                localStorage.setItem('emojiCrushSave', 0); initLevel(0);
             }
         });
 
+        // Inicia o Game Loop imediatamente
+        requestAnimationFrame(gameLoop);
+        // Tenta baixar o arquivo
         loadAssetBundle();
 
     </script>
